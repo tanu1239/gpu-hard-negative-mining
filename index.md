@@ -13,13 +13,13 @@ In our project, we will focus on exact hard-negative mining over a large collect
 
 We aim to develop efficient GPU implementations that exploit parallelism in both similarity computation and top-k selection. In particular, we will investigate processing candidate embeddings in tiles and selecting the highest-scoring candidates without storing the full similarity matrix.
 
-## The Challenge
+## Challenges
 
 Hard-negative mining presents several opportunities and tradeoffs to explore:
 
-Memory management - Although computing similarities between embeddings is highly parallelizable, efficiently mapping this computation onto a GPU requires careful memory management. A naive implementation may repeatedly load the same embeddings from global memory, while a tiled implementation can reuse embeddings through shared memory. We will investigate different tile sizes, memory layouts, and thread-block configurations to balance memory efficiency, data reuse, arithmetic intensity, and GPU utilization.
+**Memory management** - Although computing similarities between embeddings is highly parallelizable, efficiently mapping this computation onto a GPU requires careful memory management. A naive implementation may repeatedly load the same embeddings from global memory, while a tiled implementation can reuse embeddings through shared memory. We will investigate different tile sizes, memory layouts, and thread-block configurations to balance memory efficiency, data reuse, arithmetic intensity, and GPU utilization.
 
-Top-k Selection - Unlike similarity computation, top-k selection may require communication between threads to identify the highest-scoring candidates if candidates are split amongst threads. We plan to investigate different parallel selection algorithms, including repeated reductions and bitonic top-k (Shanbhag et al., 2018). We will also explore integrating top-k selection directly into tiled similarity computation, retaining only the best candidates from each tile and merging partial results to obtain the exact global top-k. This could eliminate the need to store the entire similarity matrix, but introduces tradeoffs involving synchronization and intermediate memory usage.
+**Top-k Selection** - Unlike similarity computation, top-k selection may require communication between threads to identify the highest-scoring candidates if candidates are split amongst threads. We plan to investigate different parallel selection algorithms, including repeated reductions and bitonic top-k (Shanbhag et al., 2018). We will also explore integrating top-k selection directly into tiled similarity computation, retaining only the best candidates from each tile and merging partial results to obtain the exact global top-k. This could eliminate the need to store the entire similarity matrix, but introduces tradeoffs involving synchronization and intermediate memory usage.
 
 Finally, we will investigate different ways to distribute the workload across GPU threads and blocks. Assigning one thread block per query simplifies selection but may underutilize the GPU when the number of queries is small. Distributing the candidates for each query across multiple blocks increases parallelism but requires additional communication to merge partial results for top-k selection. We hope to determine which strategies perform best under different workload sizes and how they scale.
 
@@ -27,22 +27,22 @@ Finally, we will investigate different ways to distribute the workload across GP
 
 We plan to implement our algorithms primarily in using the NVIDIA GPUs available on the CMU GHC machines. We will use PyTorch to implement a reference hard-negative mining pipeline for correctness testing and performance comparisons along with a naive CUDA implementation (no parallelism). NVIDIA and machine profiling tools will be used to measure execution time, memory usage, and performance bottlenecks.
 
-Our project will draw on two main papers. Contrastive Learning with Hard Negative Samples by Robinson et al. provides background on hard-negative sampling. Efficient Top-K Query Processing on Massively Parallel Hardware by Shanbhag et al. presents parallel GPU selection algorithms, including bitonic top-k, which we plan to study and adapt for our implementation.
+Our project will draw on two main papers. *Contrastive Learning with Hard Negative Samples* by Robinson et al. provides background on hard-negative sampling. *Efficient Top-K Query Processing on Massively Parallel Hardware* by Shanbhag et al. presents parallel GPU selection algorithms, including bitonic top-k, which we plan to study and adapt for our implementation.
 
 We will implement our own CUDA kernels rather than relying on existing optimized mining libraries. We will initially use synthetic embedding matrices for controlled experiments and may later use embeddings from a small contrastive-learning training pipeline that we create or find online.
 
 
 ## Deliverables
 
-Baseline implementation - Our first goal is to implement a straightforward hard-negative mining pipeline in PyTorch, consisting of similarity computation, invalid-candidate filtering, and top-k selection. We will then implement a naive CUDA version using separate kernels for similarity computation and selection. These implementations will serve as correctness references and performance baselines.
+**Baseline implementation** - Our first goal is to implement a straightforward hard-negative mining pipeline in PyTorch, consisting of similarity computation, invalid-candidate filtering, and top-k selection. We will then implement a naive CUDA version using separate kernels for similarity computation and selection. These implementations will serve as correctness references and performance baselines.
 
-Similarity computations - We plan to optimize similarity computations using shared-memory tiling, coalesced memory accesses, and data reuse. We will experiment with different thread-block configurations, tile sizes, and memory layouts to reduce redundant global-memory accesses. 
+**Similarity computations** - We plan to optimize similarity computations using shared-memory tiling, coalesced memory accesses, and data reuse. We will experiment with different thread-block configurations, tile sizes, and memory layouts to reduce redundant global-memory accesses. 
 
-Top-k selection strategies - We will then implement and compare different parallel top-k selection algorithms, including repeated parallel reductions and bitonic top-k. We will explore integrating selection directly into tiled similarity computation, maintaining local top-k candidates and merging partial results across tiles to obtain the exact global top-k. We will investigate the tradeoffs between separate and integrated implementations in terms of synchronization overhead, memory traffic, and GPU utilization.
+**Top-k selection strategies** - We will then implement and compare different parallel top-k selection algorithms, including repeated parallel reductions and bitonic top-k. We will explore integrating selection directly into tiled similarity computation, maintaining local top-k candidates and merging partial results across tiles to obtain the exact global top-k. We will investigate the tradeoffs between separate and integrated implementations in terms of synchronization overhead, memory traffic, and GPU utilization.
 
-Work partitioning strategies - We also plan to compare different parallel work partitioning strategies. We will investigate assigning one thread block per query versus distributing each query's candidate embeddings across multiple blocks as well as other potential strategies. We will evaluate how these strategies affect GPU utilization, load balancing, and the overhead of merging intermediate results.
+**Work partitioning strategies** - We also plan to compare different parallel work partitioning strategies. We will investigate assigning one thread block per query versus distributing each query's candidate embeddings across multiple blocks as well as other potential strategies. We will evaluate how these strategies affect GPU utilization, load balancing, and the overhead of merging intermediate results.
 
-Performance Analysis - Finally, we will conduct a detailed performance evaluation comparing all implementations. We will vary the number of queries, number of candidates, embedding dimension, and number of selected negatives (k), measuring execution time, GPU memory usage, and speedup relative to the naive CUDA implementations. We will use profiling tools to identify performance bottlenecks and analyze the effects of memory access patterns, synchronization, and work partitioning.
+**Performance Analysis** - Finally, we will conduct a detailed performance evaluation comparing all implementations. We will vary the number of queries, number of candidates, embedding dimension, and number of selected negatives (k), measuring execution time, GPU memory usage, and speedup relative to the naive CUDA implementations. We will use profiling tools to identify performance bottlenecks and analyze the effects of memory access patterns, synchronization, and work partitioning.
 
 ## Extra Work We Hope to Achieve
 
@@ -62,15 +62,15 @@ We chose NVIDIA GPUs because hard-negative mining involves large numbers of inde
 
 ## Proposed Schedule
 
-Week 1 - Continue literature review by continuing to read up on hard-negative mining and parallel GPU algorithms. Implement the PyTorch reference pipeline and a naive CUDA implementation for both similarity computation and top-k selection. Establish correctness tests and initial performance baselines.
+**Week 1** - Continue literature review by continuing to read up on hard-negative mining and parallel GPU algorithms. Implement the PyTorch reference pipeline and a naive CUDA implementation for both similarity computation and top-k selection. Establish correctness tests and initial performance baselines.
 
-Week 2 - Optimize similarity computation using shared-memory tiling, coalesced memory accesses, and different thread-block configurations. Compare the optimized implementation against the naive CUDA and PyTorch baselines, and prepare preliminary results for the November 23 milestone.
+**Week 2** - Optimize similarity computation using shared-memory tiling, coalesced memory accesses, and different thread-block configurations. Compare the optimized implementation against the naive CUDA and PyTorch baselines, and prepare preliminary results for the November 23 milestone.
 
-Week 3 - Implement and compare different parallel top-k selection algorithms, including repeated reductions and bitonic top-k. Work on integrating selection into tiled similarity computation by retaining local top-k candidates and merging them across tiles.
+**Week 3** - Implement and compare different parallel top-k selection algorithms, including repeated reductions and bitonic top-k. Work on integrating selection into tiled similarity computation by retaining local top-k candidates and merging them across tiles.
 
-Week 4 - Finish optimizing top-k selection and compare different GPU work partitioning strategies. If time permits, integrate the optimized implementation into a small PyTorch contrastive-learning training pipeline to collect results and begin trying to implement approximate hard-negative mining.
+**Week 4** - Finish optimizing top-k selection and compare different GPU work partitioning strategies. If time permits, integrate the optimized implementation into a small PyTorch contrastive-learning training pipeline to collect results and begin trying to implement approximate hard-negative mining.
 
-Week 5 - Complete remaining experiments and approximate mining if feasible. Conduct final performance and scalability comparisons, analyze bottlenecks, and prepare the final report and poster.
+**Week 5** - Complete remaining experiments and approximate mining if feasible. Conduct final performance and scalability comparisons, analyze bottlenecks, and prepare the final report and poster.
 
 
 
