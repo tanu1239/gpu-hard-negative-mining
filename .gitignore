@@ -1,0 +1,11 @@
+# Compiled executables
+naive
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+torch-env/
+
+# CUDA build files
+*.o
