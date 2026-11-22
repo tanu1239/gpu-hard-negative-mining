@@ -13,8 +13,8 @@
 #define MAX_DIM 128 // max embedding size
 #define WARP_SIZE 32
 #define FULL_MASK 0xffffffff
-#define NUM_WARPS (TILE / WARP_SIZE)
-#define MAX_K 32
+#define MERGE_THREADS 256 //threads per merge block
+#define MERGE_WARPS (MERGE_THREADS / WARP_SIZE) // 8 warps
 
 // just for debugging purposes to catch errors and stuff
 #define CUDA_CHECK(call) do {                                \
@@ -123,57 +123,91 @@ __global__ void tiled_fused_kernel(
     }
 }
 
+//One block per query.
 __global__ void merge_topk_kernel(
-    const float* partial_scores,
-    const int* partial_indices,
-    float* topk_scores,
-    int* topk_indices,
-    int B, int num_tiles, int k
+      const float* partial_scores,
+      const int* partial_indices,
+      float* topk_scores,
+      int* topk_indices,
+      int B, int num_tiles, int k
 ) {
-    int q = blockIdx.x * blockDim.x + threadIdx.x;
-
-    if (q >= B) return;
-
-    // Initialize final top-k
-    for (int i = 0; i < k; i++) {
-        topk_scores[q * k + i] = -INFINITY;
-        topk_indices[q * k + i] = -1;
-    }
-
+    //This query's finalists
+    extern __shared__ unsigned char smem[];
     int count = num_tiles * k;
+    float* s_scores  = (float*)smem; //The scores
+    int* s_indices = (int*)(s_scores + count); //The indices
 
-    // Scan all partial top-k candidates
-    for (int i = 0; i < count; i++) {
-        int offset = q * count + i;
+    __shared__ float warp_best[MERGE_WARPS];
+    __shared__ int warp_pos[MERGE_WARPS];
 
-        float score = partial_scores[offset];
-        int candidate_idx = partial_indices[offset];
+    int q = blockIdx.x; //This block's query
+    int tid = threadIdx.x;
+    int warp = tid / WARP_SIZE;
+    int lane = tid % WARP_SIZE;
 
-        // Skip invalid entries and low scores
-        if (candidate_idx < 0 ||
-            score <= topk_scores[q * k + k - 1]) {
-            continue;
+    //Copy this query's finalists into the block's shared memory
+    //Neighboring reads are coalesced
+    for (int i = tid; i < count; i += blockDim.x) {
+        int idx = partial_indices[q * count + i];
+        s_scores[i] = (idx < 0) ? -INFINITY : partial_scores[q * count + i];
+        s_indices[i] = idx;
+    }
+    __syncthreads();
+
+    for (int r = 0; r < k; r++) {
+        //First each thread finds the best out of all of its (16) positions
+        float best = -INFINITY;
+        int best_pos = -1;
+        for (int i = tid; i < count; i += blockDim.x) {
+            if (s_scores[i] > best) {
+                best = s_scores[i];
+                best_pos = i;
+            }
+        }
+        //Each warp finds the best out of its 32 threads via shuffling
+        for (int offset = 16; offset > 0; offset /= 2) {
+            float other_score = __shfl_down_sync(FULL_MASK, best, offset);
+            int other_pos = __shfl_down_sync(FULL_MASK, best_pos, offset);
+            if (other_score > best) {
+                best = other_score;
+                best_pos = other_pos;
+            }
         }
 
-        // Insert into sorted top-k
-        int pos = k - 1;
-
-        while (pos > 0 &&
-               score > topk_scores[q * k + pos - 1]) {
-
-            topk_scores[q * k + pos] =
-                topk_scores[q * k + pos - 1];
-
-            topk_indices[q * k + pos] =
-                topk_indices[q * k + pos - 1];
-
-            pos--;
+    // One thread from each warp reports best
+        if (lane == 0) {
+            warp_best[warp] = best;
+            warp_pos[warp]  = best_pos;
         }
+        __syncthreads(); //Waits for all 8 warps
 
-        topk_scores[q * k + pos] = score;
-        topk_indices[q * k + pos] = candidate_idx;
+        // Warp 0 finds the best of the 8 warp winners
+        if (warp == 0) {
+            best = (lane < MERGE_WARPS) ? warp_best[lane] : -INFINITY;
+            best_pos = (lane < MERGE_WARPS) ? warp_pos[lane] : -1;
+
+            for (int offset = 16; offset > 0; offset /= 2) {
+                float other_score = __shfl_down_sync(FULL_MASK, best, offset);
+                int other_pos = __shfl_down_sync(FULL_MASK, best_pos, offset);
+                if (other_score > best) {
+                    best = other_score;
+                    best_pos = other_pos;
+                }
+            }
+
+            // One thread records the winner, and then removes that score
+            if (lane == 0) {
+                bool found = (best_pos >= 0 && best != -INFINITY);
+                topk_scores[q * k + r]  = best;
+                topk_indices[q * k + r] = found ? s_indices[best_pos] : -1;
+                if (found) s_scores[best_pos] = -INFINITY;
+            }
+        }
+        __syncthreads(); //Everyone sees removal
     }
 }
+
+
 
 // host side: setup, execute, benchmark, and verify
 int main() {
@@ -185,7 +219,8 @@ int main() {
     const int iterations = 100;
     const int num_tiles = (N + TILE - 1) / TILE;
 
-    printf("warp Fused CUDA Hard-Negative Mining\n");
+    printf("Tiled Fused CUDA Hard-Negative Mining\n");
+
 
     // host inputs
     std::vector<float> h_queries(B * D);
@@ -267,8 +302,8 @@ int main() {
     dim3 threads(QUERIES_PER_BLOCK * WARP_SIZE); //256 threads
     dim3 blocks(num_tiles, (B + QUERIES_PER_BLOCK - 1) / QUERIES_PER_BLOCK);
 
-    const int merge_threads = 256;
-    const int merge_blocks = (B + merge_threads - 1) / merge_threads;
+    const int finalists_per_query = num_tiles * k;
+    const size_t merge_smem = finalists_per_query * (sizeof(float) + sizeof(int));
 
     // Execute both kernels
     auto run = [&]() {
@@ -283,7 +318,7 @@ int main() {
         );
         CUDA_CHECK(cudaGetLastError());
     
-        merge_topk_kernel<<<merge_blocks, merge_threads>>>(
+        merge_topk_kernel<<<B, MERGE_THREADS, merge_smem>>>(
             d_partial_scores,
             d_partial_indices,
             d_topk_scores,
